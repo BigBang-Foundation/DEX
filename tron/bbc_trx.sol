@@ -13,6 +13,17 @@ interface IERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
+interface IERC20Compatible {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
 library SafeMath {
 
     function add(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -199,6 +210,67 @@ library SafeERC20 {
     }
 }
 
+library SafeERC20Compatible {
+    using SafeMath for uint256;
+    using Address for address;
+
+    function safeTransfer(IERC20Compatible token, address to, uint256 value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transfer.selector, to, value));
+    }
+
+    function safeTransferFrom(IERC20Compatible token, address from, address to, uint256 value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
+    }
+
+    function safeApprove(IERC20Compatible token, address spender, uint256 value) internal {
+        // safeApprove should only be called when setting an initial allowance,
+        // or when resetting it to zero. To increase and decrease it, use
+        // 'safeIncreaseAllowance' and 'safeDecreaseAllowance'
+        // solhint-disable-next-line max-line-length
+        require((value == 0) || (token.allowance(address(this), spender) == 0),
+            "SafeERC20: approve from non-zero to non-zero allowance"
+        );
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
+    }
+
+    function safeIncreaseAllowance(IERC20Compatible token, address spender, uint256 value) internal {
+        uint256 newAllowance = token.allowance(address(this), spender).add(value);
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, newAllowance));
+    }
+
+    function safeDecreaseAllowance(IERC20Compatible token, address spender, uint256 value) internal {
+        uint256 newAllowance = token.allowance(address(this), spender).sub(value, "SafeERC20: decreased allowance below zero");
+        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, newAllowance));
+    }
+
+    /**
+     * @dev Imitates a Solidity high-level call (i.e. a regular function call to a contract), relaxing the requirement
+     * on the return value: the return value is optional (but if data is returned, it must not be false).
+     * @param token The token targeted by the call.
+     * @param data The call data (encoded using abi.encode or one of its variants).
+     */
+    function callOptionalReturn(IERC20Compatible token, bytes memory data) private {
+        // We need to perform a low level call here, to bypass Solidity's return data size checking mechanism, since
+        // we're implementing it ourselves.
+
+        // A Solidity high level call has three parts:
+        //  1. The target address is checked to verify it contains contract code
+        //  2. The call itself is made, and success asserted
+        //  3. The return value is decoded, which in turn checks the size of the returned data.
+        // solhint-disable-next-line max-line-length
+        // require(address(token).isContract(), "SafeERC20: call to non-contract");
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success, bytes memory returndata) = address(token).call(data);
+        require(success, "SafeERC20: low-level call failed");
+
+        // if (returndata.length > 0) { // Return data is optional
+        //     // solhint-disable-next-line max-line-length
+        //     require(abi.decode(returndata, (bool)), "SafeERC20: ERC20 operation did not succeed");
+        // }
+    }
+}
+
 contract Context {
     // Empty internal constructor, to prevent people from mistakenly deploying
     // an instance of this contract, which should be used via inheritance.
@@ -285,6 +357,10 @@ contract BBCExchange is Ownable {
     
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    using SafeERC20Compatible for IERC20Compatible;
+
+    mapping(address => bool) public _compatible;
+    
     // event
     event createOrderEvent(address sender, address sellToken, uint256 sellAmount, 
             string buyToken, uint256 buyAmount, uint256 fee, address goBetween, 
@@ -336,10 +412,13 @@ contract BBCExchange is Ownable {
     }    
     
     
-    
     mapping (address => mapping(bytes32 => Order)) public orderList;
 
     
+   function compatible(address sellToken, bool isCompatible) public onlyOwner returns (bool) {
+        _compatible[sellToken] = isCompatible;
+        return true;
+   }
    function getOrderTradePair(address _user, bytes32 _primaryKey) public view returns(
         address sellToken,
         uint256 sellAmount,
@@ -383,9 +462,12 @@ contract BBCExchange is Ownable {
             sellToken = address(0);
             sellAmount = msg.value;
         }else{
-            IERC20(sellToken).safeTransferFrom(msg.sender, address(this), sellAmount);
+            if(_compatible[sellToken]){
+                IERC20Compatible(sellToken).safeTransferFrom(msg.sender, address(this), sellAmount);
+            }else{
+                IERC20(sellToken).safeTransferFrom(msg.sender, address(this), sellAmount);
+            }
         }
-        
         orderList[msg.sender][primaryKey] = Order({owner:msg.sender, fee:fee, blockHeight:blockHeight, 
                 ownerOtherWalletAddress:ownerOtherWalletAddress, primaryKey:primaryKey});
         orderList[msg.sender][primaryKey].tradePair["trade"] = TradePair(sellToken, sellAmount, buyToken, buyAmount);
@@ -459,11 +541,21 @@ contract BBCExchange is Ownable {
                     msg.sender.transfer(exchange);
                     betweensAddress.transfer(exchange);
                 }else{
-                    IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(between.buyAddress, buyAmount);
-                    //给撮合者转账
-                    IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(betweensAddress, exchange);
-                    //给执行者转账
-                    IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, exchange);
+                    if(_compatible[orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken]){
+
+                        IERC20Compatible(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(between.buyAddress, buyAmount);
+                        //给撮合者转账
+                        IERC20Compatible(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(betweensAddress, exchange);
+                        //给执行者转账
+                        IERC20Compatible(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, exchange);
+                    
+                    }else{
+                        IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(between.buyAddress, buyAmount);
+                        //给撮合者转账
+                        IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(betweensAddress, exchange);
+                        //给执行者转账
+                        IERC20(orderList[orderAddress][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, exchange);
+                    }
                 }
                 emit withdrawEvent(between.buyAddress,buyAmount);
                 emit withdrawEvent(betweensAddress,exchange);
@@ -489,7 +581,11 @@ contract BBCExchange is Ownable {
                 if(orderList[msg.sender][ordrePrimaryKey].tradePair['trade'].sellToken == address(0)){
                     msg.sender.transfer(_amount);
                 }else{
-                    IERC20(orderList[msg.sender][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, _amount);
+                    if(_compatible[orderList[msg.sender][ordrePrimaryKey].tradePair['trade'].sellToken]){
+                        IERC20Compatible(orderList[msg.sender][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, _amount);
+                    }else{
+                        IERC20(orderList[msg.sender][ordrePrimaryKey].tradePair['trade'].sellToken).safeTransfer(msg.sender, _amount);
+                    }
                 }
                 emit retraceEvent(msg.sender, _amount, ordrePrimaryKey);
 
