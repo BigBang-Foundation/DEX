@@ -293,7 +293,8 @@ contract BBCExchange is Ownable {
     event retraceEvent(address indexed _to, uint256 _amount, bytes32 orderPrimaryKey);
     event withdrawEvent(address indexed _to, uint256 _amount);
     event betweenEvent(address orderAddress, address sellToken,string buyToken, uint256 amount, address buyAddress, 
-            address carryOutAddress, bytes32 randIHash, bytes32 randJHash, string randKey);
+            address carryOutAddress, bytes32 randIHash, bytes32 randJHash, string randKey,
+            bytes32 primaryKey, address goBetween, uint256 sellerValidHeight, bytes32 betweenKey);
     event debug(uint256 msg);
     // event debug(bool msg);
     // event debug(bytes32 msg);
@@ -417,7 +418,9 @@ contract BBCExchange is Ownable {
                 GoBetween({sellAmount:amount, buyAddress:buyAddress,carryOut:carryOutAddress,randIHash:randIHash,
                         randJHash:randJHash,randKey:randKey, primaryKey:betweenPrimaryKey, buyAmount:buyAmount, blockNo:block.number});
             orderList[orderAddress][ordrePrimaryKey].betweensKeys[ordrePrimaryKey].push(betweenPrimaryKey);
-            emit betweenEvent(orderAddress,sellToken,buyToken,amount,buyAddress,carryOutAddress,randIHash,randJHash,randKey);
+            Order memory o = orderList[orderAddress][ordrePrimaryKey];
+            emit betweenEvent(orderAddress,sellToken,buyToken,amount,buyAddress,carryOutAddress,randIHash,randJHash,randKey,
+                ordrePrimaryKey, msg.sender, o.blockHeight.add(block.number), betweenPrimaryKey);
      }
      
     //  /**
