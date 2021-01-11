@@ -441,6 +441,20 @@ contract BBCExchange is Ownable {
         return (between.sellAmount, between.buyAddress, between.carryOut, 
                 between.randIHash,between.randJHash,between.randKey,between.buyAmount);
     }
+  
+    function getOrderTradePairAmount(address _user, bytes32 ordrePrimaryKey) public view returns(uint256) {
+            uint256 _amount = orderList[_user][ordrePrimaryKey].tradePair['trade'].sellAmount;
+            bytes32[] memory keys = orderList[_user][ordrePrimaryKey].betweensKeys[ordrePrimaryKey];
+            for(uint j = 0; j < keys.length; j++){
+                uint256 blockNo = orderList[_user][ordrePrimaryKey].blockHeight
+                    .add(orderList[_user][ordrePrimaryKey].betweens[keys[j]].blockNo);
+                if (block.number > blockNo){
+                    _amount = _amount.add(orderList[_user][ordrePrimaryKey].betweens[keys[j]].sellAmount);
+                }
+            }
+        return _amount;
+    }
+
     
     /**
      * 创建挂单 
